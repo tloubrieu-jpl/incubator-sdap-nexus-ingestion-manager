@@ -1,10 +1,11 @@
 import tempfile
-from unittest import mock
 import unittest
+from unittest import mock
 
 from collection_manager.entities import Collection
 from collection_manager.services import CollectionProcessor
-from collection_manager.services.history_manager import FileIngestionHistoryBuilder, FileIngestionHistory
+from collection_manager.services.history_manager import FileIngestionHistoryBuilder
+from collection_manager.services.history_manager import GranuleStatus
 
 
 class TestCollectionProcessor(unittest.TestCase):
@@ -60,7 +61,85 @@ class TestCollectionProcessor(unittest.TestCase):
         filled = CollectionProcessor._fill_template(collection, template)
         self.assertEqual(filled, expected)
 
-    @mock.patch.object(FileIngestionHistory, 'push')
-    @mock.patch.object(FileIngestionHistory, 'get_granule_status')
-    def test_process_granule(self):
-        history_manager_builder = FileIngestionHistoryBuilder('/foo')
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistory', autospec=True)
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistoryBuilder', autospec=True)
+    @mock.patch('collection_manager.services.MessagePublisher', autospec=True)
+    def test_process_granule_with_historical_granule(self, mock_publisher, mock_history_builder, mock_history):
+        mock_history.get_granule_status.return_value = GranuleStatus.DESIRED_HISTORICAL
+        mock_history_builder.build.return_value = mock_history
+
+        collection_processor = CollectionProcessor(mock_publisher, mock_history_builder)
+        collection = Collection(dataset_id="test_dataset",
+                                path="test_path",
+                                variable="test_variable",
+                                historical_priority=1,
+                                forward_processing_priority=2,
+                                date_from=None,
+                                date_to=None)
+
+        collection_processor.process_granule("test.nc", collection)
+
+        mock_publisher.publish_message.assert_called_with(body=mock.ANY, priority=1)
+        mock_history.push.assert_called()
+
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistory', autospec=True)
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistoryBuilder', autospec=True)
+    @mock.patch('collection_manager.services.MessagePublisher', autospec=True)
+    def test_process_granule_with_forward_processing_granule(self, mock_publisher, mock_history_builder, mock_history):
+        mock_history.get_granule_status.return_value = GranuleStatus.DESIRED_FORWARD_PROCESSING
+        mock_history_builder.build.return_value = mock_history
+
+        collection_processor = CollectionProcessor(mock_publisher, mock_history_builder)
+        collection = Collection(dataset_id="test_dataset",
+                                path="test_path",
+                                variable="test_variable",
+                                historical_priority=1,
+                                forward_processing_priority=2,
+                                date_from=None,
+                                date_to=None)
+
+        collection_processor.process_granule("test.nc", collection)
+
+        mock_publisher.publish_message.assert_called_with(body=mock.ANY, priority=2)
+        mock_history.push.assert_called()
+
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistory', autospec=True)
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistoryBuilder', autospec=True)
+    @mock.patch('collection_manager.services.MessagePublisher', autospec=True)
+    def test_process_granule_with_undesired_granule(self, mock_publisher, mock_history_builder, mock_history):
+        mock_history.get_granule_status.return_value = GranuleStatus.UNDESIRED
+        mock_history_builder.build.return_value = mock_history
+
+        collection_processor = CollectionProcessor(mock_publisher, mock_history_builder)
+        collection = Collection(dataset_id="test_dataset",
+                                path="test_path",
+                                variable="test_variable",
+                                historical_priority=1,
+                                forward_processing_priority=2,
+                                date_from=None,
+                                date_to=None)
+
+        collection_processor.process_granule("test.nc", collection)
+
+        mock_publisher.publish_message.assert_not_called()
+        mock_history.push.assert_not_called()
+
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistory', autospec=True)
+    @mock.patch('collection_manager.services.history_manager.FileIngestionHistoryBuilder', autospec=True)
+    @mock.patch('collection_manager.services.MessagePublisher', autospec=True)
+    def test_process_granule_with_unsupported_file_type(self, mock_publisher, mock_history_builder, mock_history):
+        mock_history_builder.build.return_value = mock_history
+
+        collection_processor = CollectionProcessor(mock_publisher, mock_history_builder)
+        collection = Collection(dataset_id="test_dataset",
+                                path="test_path",
+                                variable="test_variable",
+                                historical_priority=1,
+                                forward_processing_priority=2,
+                                date_from=None,
+                                date_to=None)
+
+        collection_processor.process_granule("test.foo", collection)
+
+        mock_publisher.publish_message.assert_not_called()
+        mock_history.push.assert_not_called()
